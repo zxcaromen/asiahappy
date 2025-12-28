@@ -1,0 +1,2 @@
+worker: python mains.py
+web: puthon -m http.server $PORT
