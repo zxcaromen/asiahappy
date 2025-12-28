@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: asiahappy-bot
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python mains.py
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.0
+    autoDeploy: true

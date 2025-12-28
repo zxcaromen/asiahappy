@@ -9,6 +9,7 @@ import json
 from typing import Dict, List, Optional, Tuple
 from pathlib import Path
 
+from dotenv import load_dotenv
 from aiogram import Bot, Dispatcher, F
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode, ContentType
@@ -22,12 +23,14 @@ from aiogram.fsm.storage.memory import MemoryStorage
 
 from database import Database
 
+
+load_dotenv()
 # Конфигурация
-TOKEN = '8592177753:AAEJ1oSANrgApnVY-6dP27PEkf5Y4HBrEW4'
-MANAGER_USERNAME = '@AsiaHappyManager'
+TOKEN = os.getenv('8592177753:AAEJ1oSANrgApnVY-6dP27PEkf5Y4HBrEW4')
+MANAGER_USERNAME = os.getenv('MANAGER_USERNAME', '@AsiaHappyManager')
 
 # Админы (только эти пользователи имеют доступ к админке)
-ADMINS = ['seamlx', 'Adecvat22']
+ADMINS = os.getenv('ADMINS', 'seamlx,Adecvat22').split(',')
 
 # Инициализация базы данных
 db = Database()
