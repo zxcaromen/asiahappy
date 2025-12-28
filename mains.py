@@ -96,6 +96,12 @@ class AdminStates(StatesGroup):
     
     # Удаление товара
     waiting_for_delete_product = State()
+
+    # Редактирование фотографий товара
+    waiting_for_edit_product_photos_menu = State()  # Меню управления фото
+    waiting_for_add_product_photos = State()         # Добавление новых фото
+    waiting_for_delete_product_photo = State()       # Удаление фото
+    waiting_for_replace_product_photo = State()      # Замена фото
     
     # Бан пользователя
     waiting_for_username_to_ban = State()
@@ -3527,7 +3533,7 @@ async def edit_product_select(callback: CallbackQuery, state: FSMContext):
         product = db.get_product(product_id)
         
         if not product:
-            await callback.answer("Товар не найден", show_alert=True)
+            await callback.answer("Товар не найдена", show_alert=True)
             return
         
         await state.update_data(
@@ -3537,6 +3543,9 @@ async def edit_product_select(callback: CallbackQuery, state: FSMContext):
         
         type_names = {'preorder': '📅 Предзаказ', 'instock': '✅ В наличии'}
         
+        # Получаем количество фото
+        photo_count = len(product.get('photo_urls', []))
+        
         builder = InlineKeyboardBuilder()
         builder.button(text="📝 Изменить название", callback_data="edit_field_name")
         builder.button(text="💰 Изменить цену", callback_data="edit_field_price")
@@ -3545,6 +3554,8 @@ async def edit_product_select(callback: CallbackQuery, state: FSMContext):
         builder.button(text="📦 Изменить тип", callback_data="edit_field_type")
         builder.button(text="📚 Изменить подкатегорию", callback_data="edit_field_subcategory")
         builder.button(text="🏷️ Изменить теги", callback_data="edit_field_tags")
+        # ДОБАВЛЯЕМ КНОПКУ ДЛЯ УПРАВЛЕНИЯ ФОТО
+        builder.button(text=f"🖼️ Управление фото ({photo_count})", callback_data="edit_field_photos")
         builder.button(text="❌ Отмена", callback_data="edit_field_cancel")
         builder.adjust(1)
         
@@ -3555,6 +3566,7 @@ async def edit_product_select(callback: CallbackQuery, state: FSMContext):
             f"<b>Категория:</b> {product['category_slug']}\n"
             f"<b>Тип:</b> {type_names[product['type']]}\n"
             f"<b>Подкатегория:</b> {product['subcategory_slug'] or 'Нет'}\n"
+            f"<b>Фото:</b> {photo_count} шт.\n"
             f"<b>Теги:</b> {', '.join(product.get('tags', [])[:3]) if product.get('tags') else 'Нет'}\n\n"
             "Что вы хотите изменить?",
             parse_mode=ParseMode.HTML,
@@ -3564,6 +3576,452 @@ async def edit_product_select(callback: CallbackQuery, state: FSMContext):
     except Exception as e:
         print(f"Error in edit_product_select: {e}")
         await callback.answer("Ошибка при выборе товара", show_alert=True)
+
+@dp.callback_query(F.data == 'edit_field_photos', AdminStates.waiting_for_edit_product)
+async def edit_product_photos_menu(callback: CallbackQuery, state: FSMContext):
+    """Меню управления фотографиями товара"""
+    data = await state.get_data()
+    product_data = data.get('product_data')
+    product_id = data.get('product_id')
+    
+    # Получаем текущие фото
+    photo_urls = product_data.get('photo_urls', [])
+    photo_count = len(photo_urls)
+    
+    await state.set_state(AdminStates.waiting_for_edit_product_photos_menu)
+    
+    # Используем новую функцию для отображения меню
+    await update_photos_menu_message(callback.message, product_data)
+
+@dp.callback_query(F.data == 'back_to_edit_menu')
+async def back_to_edit_menu(callback: CallbackQuery, state: FSMContext):
+    """Вернуться в меню редактирования товара"""
+    try:
+        # Очищаем состояние меню фото
+        await state.set_state(AdminStates.waiting_for_edit_product)
+        
+        # Получаем данные из состояния
+        data = await state.get_data()
+        product_id = data.get('product_id')
+        
+        if not product_id:
+            await callback.answer("Ошибка: товар не найден", show_alert=True)
+            return
+        
+        # Обновляем данные товара из базы
+        product = db.get_product(product_id)
+        if not product:
+            await callback.answer("Товар не найден в базе", show_alert=True)
+            return
+        
+        await state.update_data(product_data=product)
+        
+        type_names = {'preorder': '📅 Предзаказ', 'instock': '✅ В наличии'}
+        
+        # Получаем количество фото
+        photo_count = len(product.get('photo_urls', []))
+        
+        builder = InlineKeyboardBuilder()
+        builder.button(text="📝 Изменить название", callback_data="edit_field_name")
+        builder.button(text="💰 Изменить цену", callback_data="edit_field_price")
+        builder.button(text="📝 Изменить описание", callback_data="edit_field_description")
+        builder.button(text="📂 Изменить категорию", callback_data="edit_field_category")
+        builder.button(text="📦 Изменить тип", callback_data="edit_field_type")
+        builder.button(text="📚 Изменить подкатегорию", callback_data="edit_field_subcategory")
+        builder.button(text="🏷️ Изменить теги", callback_data="edit_field_tags")
+        builder.button(text=f"🖼️ Управление фото ({photo_count})", callback_data="edit_field_photos")
+        builder.button(text="❌ Отмена", callback_data="edit_field_cancel")
+        builder.adjust(1)
+        
+        await callback.message.edit_text(
+            f"📝 <b>Редактирование товара</b>\n\n"
+            f"<b>Товар:</b> {product['name']}\n"
+            f"<b>Цена:</b> {product['price']}\n"
+            f"<b>Категория:</b> {product['category_slug']}\n"
+            f"<b>Тип:</b> {type_names[product['type']]}\n"
+            f"<b>Подкатегория:</b> {product['subcategory_slug'] or 'Нет'}\n"
+            f"<b>Фото:</b> {photo_count} шт.\n"
+            f"<b>Теги:</b> {', '.join(product.get('tags', [])[:3]) if product.get('tags') else 'Нет'}\n\n"
+            "Что вы хотите изменить?",
+            parse_mode=ParseMode.HTML,
+            reply_markup=builder.as_markup()
+        )
+        
+    except Exception as e:
+        print(f"Error in back_to_edit_menu: {e}")
+        await callback.answer("Ошибка при возврате к редактированию", show_alert=True)
+
+@dp.callback_query(F.data.startswith('view_photo_'), AdminStates.waiting_for_edit_product_photos_menu)
+async def view_product_photo(callback: CallbackQuery, state: FSMContext):
+    """Просмотр конкретного фото товара"""
+    photo_index = int(callback.data.replace('view_photo_', ''))
+    
+    data = await state.get_data()
+    product_data = data.get('product_data')
+    product_id = data.get('product_id')
+    
+    photo_urls = product_data.get('photo_urls', [])
+    
+    if photo_index < 0 or photo_index >= len(photo_urls):
+        await callback.answer("Фото не найдено", show_alert=True)
+        return
+    
+    photo_path = photo_urls[photo_index]
+    
+    try:
+        # Проверяем существование файла
+        if os.path.exists(photo_path):
+            photo = FSInputFile(photo_path)
+            await callback.message.answer_photo(
+                photo=photo,
+                caption=f"📷 <b>Фото {photo_index + 1} из {len(photo_urls)}</b>\n"
+                       f"Товар: {product_data['name']}",
+                parse_mode=ParseMode.HTML
+            )
+        else:
+            await callback.answer(f"Файл не найден: {photo_path}", show_alert=True)
+    except Exception as e:
+        await callback.answer(f"Ошибка при загрузке фото: {e}", show_alert=True)
+
+@dp.callback_query(F.data == 'add_more_photos', AdminStates.waiting_for_edit_product_photos_menu)
+async def add_product_photos_start(callback: CallbackQuery, state: FSMContext):
+    """Начало добавления новых фото"""
+    await state.set_state(AdminStates.waiting_for_add_product_photos)
+    
+    await callback.message.edit_text(
+        "➕ <b>Добавление новых фото к товару</b>\n\n"
+        "Отправьте одно или несколько фото.\n"
+        "Когда закончите, нажмите /done\n\n"
+        "<i>Поддерживаются только фото в формате JPG/PNG</i>",
+        parse_mode=ParseMode.HTML
+    )
+
+@dp.message(AdminStates.waiting_for_add_product_photos)
+async def add_product_photos_process(message: Message, state: FSMContext, bot: Bot):
+    """Обработка добавления новых фото"""
+    data = await state.get_data()
+    product_id = data.get('product_id')
+    product_data = data.get('product_data')
+    
+    # Проверяем команды
+    if message.text and message.text.strip() == '/done':
+        # Завершаем добавление фото
+        new_photo_urls = data.get('new_photo_urls', [])
+        
+        if new_photo_urls:
+            # Обновляем товар с новыми фото
+            current_photos = product_data.get('photo_urls', [])
+            updated_photos = current_photos + new_photo_urls
+            
+            success = db.update_product(product_id, photo_urls=updated_photos)
+            
+            if success:
+                await message.answer(
+                    f"✅ <b>Добавлено {len(new_photo_urls)} новых фото!</b>\n\n"
+                    f"📸 Теперь у товара {len(updated_photos)} фото.\n\n"
+                    "Возвращаемся в меню управления фото...",
+                    parse_mode=ParseMode.HTML
+                )
+                
+                # Обновляем данные товара в состоянии
+                updated_product = db.get_product(product_id)
+                await state.update_data(product_data=updated_product, new_photo_urls=[])
+                
+                # Возвращаемся в меню управления фото
+                # Вместо создания искусственного CallbackQuery, просто отправляем сообщение с кнопками
+                await show_photos_menu_after_add(message, product_id, updated_product)
+            else:
+                await message.answer(
+                    "❌ <b>Ошибка при сохранении фото</b>\n\n"
+                    "Попробуйте снова или обратитесь к разработчику.",
+                    parse_mode=ParseMode.HTML
+                )
+        else:
+            await message.answer(
+                "📸 <b>Не добавлено ни одного нового фото</b>\n\n"
+                "Возвращаемся в меню управления фото...",
+                parse_mode=ParseMode.HTML
+            )
+            
+            # Возвращаемся в меню управления фото
+            await show_photos_menu_after_add(message, product_id, product_data)
+        
+        return
+    
+    # Обработка фото
+    if message.photo:
+        try:
+            photo = message.photo[-1]
+            file_id = photo.file_id
+            
+            # Создаем папку для фото если её нет
+            os.makedirs('img', exist_ok=True)
+            
+            # Получаем файл
+            file = await bot.get_file(file_id)
+            file_path = file.file_path
+            
+            # Генерируем уникальное имя файла
+            import uuid
+            filename = f"{uuid.uuid4().hex}.jpg"
+            save_path = f"img/{filename}"
+            
+            # Скачиваем файл
+            await bot.download_file(file_path, save_path)
+            
+            # Получаем текущие новые фото из состояния
+            current_new_photos = data.get('new_photo_urls', [])
+            current_new_photos.append(save_path)
+            
+            await state.update_data(new_photo_urls=current_new_photos)
+            
+            await message.answer(
+                f"✅ <b>Фото сохранено!</b>\n"
+                f"📸 Загружено новых фото: {len(current_new_photos)}\n\n"
+                "Можете отправить ещё фото или нажмите /done чтобы закончить",
+                parse_mode=ParseMode.HTML
+            )
+            
+        except Exception as e:
+            print(f"Error saving photo: {e}")
+            await message.answer(
+                "❌ <b>Ошибка при сохранении фото</b>\n\n"
+                "Попробуйте отправить фото еще раз.",
+                parse_mode=ParseMode.HTML
+            )
+    else:
+        # Если это не фото и не команда
+        await message.answer(
+            "❌ <b>Пожалуйста, отправьте фото</b>\n\n"
+            "Отправьте фото товара или нажмите /done чтобы закончить",
+            parse_mode=ParseMode.HTML
+        )
+
+async def show_photos_menu_after_add(message: Message, product_id: int, product_data: dict):
+    """Показать меню управления фото после добавления новых фото"""
+    photo_urls = product_data.get('photo_urls', [])
+    photo_count = len(photo_urls)
+    
+    builder = InlineKeyboardBuilder()
+    
+    # Показываем текущие фото с номерами
+    if photo_urls:
+        for i, photo_url in enumerate(photo_urls, 1):
+            builder.button(text=f"📷 Фото {i}", callback_data=f"view_photo_{i-1}")
+        
+        # Кнопки для управления
+        builder.button(text="➕ Добавить фото", callback_data="add_more_photos")
+        builder.button(text="🗑️ Удалить фото", callback_data="delete_photo_menu")
+        builder.button(text="🔄 Заменить фото", callback_data="replace_photo_menu")
+        builder.button(text="📋 Удалить все фото", callback_data="delete_all_photos")
+    else:
+        builder.button(text="➕ Добавить фото", callback_data="add_more_photos")
+    
+    builder.button(text="⬅️ Назад к редактированию", callback_data="back_to_edit_menu")
+    builder.adjust(1)
+    
+    await message.answer(
+        f"🖼️ <b>Управление фотографиями товара</b>\n\n"
+        f"<b>Товар:</b> {product_data['name']}\n"
+        f"<b>Текущее количество фото:</b> {photo_count}\n\n"
+        "Выберите действие:",
+        parse_mode=ParseMode.HTML,
+        reply_markup=builder.as_markup()
+    )
+
+@dp.callback_query(F.data == 'delete_photo_menu', AdminStates.waiting_for_edit_product_photos_menu)
+async def delete_product_photo_menu(callback: CallbackQuery, state: FSMContext):
+    """Меню выбора фото для удаления"""
+    data = await state.get_data()
+    product_data = data.get('product_data')
+    
+    photo_urls = product_data.get('photo_urls', [])
+    
+    if not photo_urls:
+        await callback.answer("Нет фото для удаления", show_alert=True)
+        return
+    
+    await state.set_state(AdminStates.waiting_for_delete_product_photo)
+    
+    builder = InlineKeyboardBuilder()
+    
+    for i, photo_url in enumerate(photo_urls, 1):
+        builder.button(text=f"🗑️ Удалить фото {i}", callback_data=f"delete_photo_{i-1}")
+    
+    builder.button(text="⬅️ Назад", callback_data="back_to_photos_menu")
+    builder.adjust(1)
+    
+    await callback.message.edit_text(
+        f"🗑️ <b>Удаление фото товара</b>\n\n"
+        f"<b>Товар:</b> {product_data['name']}\n"
+        f"<b>Всего фото:</b> {len(photo_urls)}\n\n"
+        "Выберите фото для удаления:",
+        parse_mode=ParseMode.HTML,
+        reply_markup=builder.as_markup()
+    )
+
+@dp.callback_query(F.data.startswith('delete_photo_'), AdminStates.waiting_for_delete_product_photo)
+async def delete_product_photo_process(callback: CallbackQuery, state: FSMContext):
+    """Удаление конкретного фото"""
+    photo_index = int(callback.data.replace('delete_photo_', ''))
+    
+    data = await state.get_data()
+    product_id = data.get('product_id')
+    product_data = data.get('product_data')
+    
+    photo_urls = product_data.get('photo_urls', [])
+    
+    if photo_index < 0 or photo_index >= len(photo_urls):
+        await callback.answer("Фото не найдено", show_alert=True)
+        return
+    
+    # Удаляем фото из списка
+    photo_to_delete = photo_urls[photo_index]
+    updated_photo_urls = photo_urls.copy()
+    updated_photo_urls.pop(photo_index)
+    
+    # Обновляем товар в базе
+    success = db.update_product(product_id, photo_urls=updated_photo_urls)
+    
+    if success:
+        # Пытаемся удалить файл с диска
+        try:
+            if os.path.exists(photo_to_delete):
+                os.remove(photo_to_delete)
+        except Exception as e:
+            print(f"Error deleting file {photo_to_delete}: {e}")
+        
+        await callback.answer(f"Фото {photo_index + 1} удалено!", show_alert=True)
+        
+        # Обновляем данные товара в состоянии
+        updated_product = db.get_product(product_id)
+        await state.update_data(product_data=updated_product)
+        
+        # Обновляем текущее сообщение с новым меню
+        await update_photos_menu_message(callback.message, updated_product)
+    else:
+        await callback.answer("Ошибка при удалении фото", show_alert=True)
+
+async def update_photos_menu_message(message: Message, product_data: dict):
+    """Обновить сообщение с меню управления фото"""
+    photo_urls = product_data.get('photo_urls', [])
+    photo_count = len(photo_urls)
+    
+    builder = InlineKeyboardBuilder()
+    
+    # Показываем текущие фото с номерами
+    if photo_urls:
+        for i, photo_url in enumerate(photo_urls, 1):
+            builder.button(text=f"📷 Фото {i}", callback_data=f"view_photo_{i-1}")
+        
+        # Кнопки для управления
+        builder.button(text="➕ Добавить фото", callback_data="add_more_photos")
+        builder.button(text="🗑️ Удалить фото", callback_data="delete_photo_menu")
+        builder.button(text="🔄 Заменить фото", callback_data="replace_photo_menu")
+        builder.button(text="📋 Удалить все фото", callback_data="delete_all_photos")
+    else:
+        builder.button(text="➕ Добавить фото", callback_data="add_more_photos")
+    
+    builder.button(text="⬅️ Назад к редактированию", callback_data="back_to_edit_menu")
+    builder.adjust(1)
+    
+    try:
+        await message.edit_text(
+            f"🖼️ <b>Управление фотографиями товара</b>\n\n"
+            f"<b>Товар:</b> {product_data['name']}\n"
+            f"<b>Текущее количество фото:</b> {photo_count}\n\n"
+            "Выберите действие:",
+            parse_mode=ParseMode.HTML,
+            reply_markup=builder.as_markup()
+        )
+    except Exception:
+        # Если не удалось редактировать сообщение, отправляем новое
+        await message.answer(
+            f"🖼️ <b>Управление фотографиями товара</b>\n\n"
+            f"<b>Товар:</b> {product_data['name']}\n"
+            f"<b>Текущее количество фото:</b> {photo_count}\n\n"
+            "Выберите действие:",
+            parse_mode=ParseMode.HTML,
+            reply_markup=builder.as_markup()
+        )
+
+@dp.callback_query(F.data == 'delete_all_photos', AdminStates.waiting_for_edit_product_photos_menu)
+async def delete_all_product_photos(callback: CallbackQuery, state: FSMContext):
+    """Удаление всех фото товара"""
+    data = await state.get_data()
+    product_id = data.get('product_id')
+    product_data = data.get('product_data')
+    
+    photo_urls = product_data.get('photo_urls', [])
+    
+    if not photo_urls:
+        await callback.answer("Нет фото для удаления", show_alert=True)
+        return
+    
+    # Создаем кнопки подтверждения
+    builder = InlineKeyboardBuilder()
+    builder.button(text="✅ Да, удалить все фото", callback_data="confirm_delete_all_photos")
+    builder.button(text="❌ Нет, отменить", callback_data="cancel_delete_all_photos")
+    builder.adjust(1)
+    
+    await callback.message.edit_text(
+        f"⚠️ <b>ВНИМАНИЕ!</b>\n\n"
+        f"Вы собираетесь удалить <b>ВСЕ {len(photo_urls)} ФОТО</b> товара:\n"
+        f"<b>{product_data['name']}</b>\n\n"
+        f"Это действие нельзя отменить!\n\n"
+        f"Вы уверены?",
+        parse_mode=ParseMode.HTML,
+        reply_markup=builder.as_markup()
+    )
+
+@dp.callback_query(F.data == 'confirm_delete_all_photos')
+async def confirm_delete_all_photos(callback: CallbackQuery, state: FSMContext):
+    """Подтверждение удаления всех фото"""
+    data = await state.get_data()
+    product_id = data.get('product_id')
+    product_data = data.get('product_data')
+    
+    photo_urls = product_data.get('photo_urls', [])
+    
+    # Обновляем товар (удаляем все фото)
+    success = db.update_product(product_id, photo_urls=[])
+    
+    if success:
+        # Пытаемся удалить файлы с диска
+        for photo_url in photo_urls:
+            try:
+                if os.path.exists(photo_url):
+                    os.remove(photo_url)
+            except Exception as e:
+                print(f"Error deleting file {photo_url}: {e}")
+        
+        await callback.answer("Все фото удалены!", show_alert=True)
+        
+        # Обновляем данные товара в состоянии
+        updated_product = db.get_product(product_id)
+        await state.update_data(product_data=updated_product)
+        
+        # Обновляем меню
+        await update_photos_menu_message(callback.message, updated_product)
+    else:
+        await callback.answer("Ошибка при удалении фото", show_alert=True)
+
+@dp.callback_query(F.data == 'cancel_delete_all_photos')
+async def cancel_delete_all_photos(callback: CallbackQuery, state: FSMContext):
+    """Отмена удаления всех фото"""
+    data = await state.get_data()
+    product_data = data.get('product_data')
+    
+    await update_photos_menu_message(callback.message, product_data)    
+
+@dp.callback_query(F.data == 'back_to_photos_menu', AdminStates.waiting_for_delete_product_photo)
+async def back_to_photos_menu_from_delete(callback: CallbackQuery, state: FSMContext):
+    """Вернуться в меню управления фото"""
+    data = await state.get_data()
+    product_data = data.get('product_data')
+    
+    await state.set_state(AdminStates.waiting_for_edit_product_photos_menu)
+    await update_photos_menu_message(callback.message, product_data)
 
 @dp.callback_query(F.data.startswith('edit_field_'), AdminStates.waiting_for_edit_product)
 async def edit_product_field_start(callback: CallbackQuery, state: FSMContext):
@@ -3585,7 +4043,8 @@ async def edit_product_field_start(callback: CallbackQuery, state: FSMContext):
         'category': 'категорию',
         'type': 'тип',
         'subcategory': 'подкатегорию',
-        'tags': 'теги'
+        'tags': 'теги',
+        'photos': 'фотографии'
     }
     
     if field in field_names:
@@ -3653,6 +4112,13 @@ async def edit_product_field_start(callback: CallbackQuery, state: FSMContext):
                 reply_markup=builder.as_markup()
             )
             return
+        
+        elif field == 'photos':
+            # Переходим в меню управления фото
+            await edit_product_photos_menu(callback, state)
+            return
+        
+       
         
         else:
             # Для остальных полей запрашиваем текстовый ввод
@@ -3967,6 +4433,48 @@ async def admin_search_products(message: Message):
             "<i>Пример: /search танк</i>",
             parse_mode=ParseMode.HTML
         )
+async def update_photos_menu_message(message: Message, product_data: dict):
+    """Обновить сообщение с меню управления фото"""
+    photo_urls = product_data.get('photo_urls', [])
+    photo_count = len(photo_urls)
+    
+    builder = InlineKeyboardBuilder()
+    
+    # Показываем текущие фото с номерами
+    if photo_urls:
+        for i, photo_url in enumerate(photo_urls, 1):
+            builder.button(text=f"📷 Фото {i}", callback_data=f"view_photo_{i-1}")
+        
+        # Кнопки для управления
+        builder.button(text="➕ Добавить фото", callback_data="add_more_photos")
+        builder.button(text="🗑️ Удалить фото", callback_data="delete_photo_menu")
+        builder.button(text="🔄 Заменить фото", callback_data="replace_photo_menu")
+        builder.button(text="📋 Удалить все фото", callback_data="delete_all_photos")
+    else:
+        builder.button(text="➕ Добавить фото", callback_data="add_more_photos")
+    
+    builder.button(text="⬅️ Назад к редактированию", callback_data="back_to_edit_menu")
+    builder.adjust(1)
+    
+    try:
+        await message.edit_text(
+            f"🖼️ <b>Управление фотографиями товара</b>\n\n"
+            f"<b>Товар:</b> {product_data['name']}\n"
+            f"<b>Текущее количество фото:</b> {photo_count}\n\n"
+            "Выберите действие:",
+            parse_mode=ParseMode.HTML,
+            reply_markup=builder.as_markup()
+        )
+    except Exception:
+        # Если не удалось редактировать сообщение, отправляем новое
+        await message.answer(
+            f"🖼️ <b>Управление фотографиями товара</b>\n\n"
+            f"<b>Товар:</b> {product_data['name']}\n"
+            f"<b>Текущее количество фото:</b> {photo_count}\n\n"
+            "Выберите действие:",
+            parse_mode=ParseMode.HTML,
+            reply_markup=builder.as_markup()
+        )        
 
 # ==================== ОСНОВНАЯ ФУНКЦИЯ ====================
 
